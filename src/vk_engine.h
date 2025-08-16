@@ -15,8 +15,12 @@ namespace mnv {
             VkCommandBuffer                 commandBuffer;
 
             VkSemaphore                     swapchainSemaphore;
-            VkSemaphore                     renderSemaphore;
             VkFence                         renderFence;
+        };
+        struct SwapchainImageData {
+            // The semaphore to signal rendering completion must be stored at a swapchain image granularity,
+            // not inline with the number of frames the application wants to have inflight.
+            VkSemaphore                     renderSemaphore;
         };
 
     public:
@@ -39,9 +43,10 @@ namespace mnv {
         std::vector<VkImageView>    _swapchainImageViews;
         VkExtent2D                  _swapchainExtent;
 
-        std::vector<FrameData>      _frames;
-        VkQueue                     _graphicsQueue;
-        std::uint32_t               _graphicsQueueFamilyIndex;
+        std::vector<FrameData>          _frames;
+        std::vector<SwapchainImageData> _swapchainImageData;
+        VkQueue                         _graphicsQueue;
+        std::uint32_t                   _graphicsQueueFamilyIndex;
 
         SDL_Window*                 _window{ nullptr };
 
@@ -59,7 +64,8 @@ namespace mnv {
                                     //run main loop
         void                        run();
 
-        inline FrameData&           getCurrentFrame() { return _frames[_frameNumber % _swapchainImages.size()]; }
+        inline FrameData&           getCurrentFrame() { return _frames[_frameNumber % _frames.size()]; }
+        inline SwapchainImageData&  getSwapchainImageData(std::size_t index) { return _swapchainImageData[index % _swapchainImageData.size()]; }
 
     private:
         void                        initVulkan();

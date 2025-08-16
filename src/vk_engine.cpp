@@ -61,8 +61,10 @@ void VulkanEngine::cleanup() {
             vkDestroyCommandPool(_logicalDevice, frame.commandPool, nullptr);
 
             vkDestroyFence(_logicalDevice, frame.renderFence, nullptr);
-            vkDestroySemaphore(_logicalDevice, frame.renderSemaphore, nullptr);
             vkDestroySemaphore(_logicalDevice, frame.swapchainSemaphore, nullptr);
+        }
+        for (auto& imageData : _swapchainImageData) {
+            vkDestroySemaphore(_logicalDevice, imageData.renderSemaphore, nullptr);
         }
 
         destroySwapchain();
@@ -117,7 +119,7 @@ void VulkanEngine::draw() {
     VkCommandBufferSubmitInfo bufferSubmitInfo = vkinit::command_buffer_submit_info(commandBuffer);
 
     VkSemaphoreSubmitInfo waitInfo = vkinit::semaphore_submit_info(VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT_KHR, getCurrentFrame().swapchainSemaphore);
-    VkSemaphoreSubmitInfo signalInfo = vkinit::semaphore_submit_info(VK_PIPELINE_STAGE_2_ALL_GRAPHICS_BIT_KHR, _frames[nextSwapchainImageIndex].renderSemaphore);
+    VkSemaphoreSubmitInfo signalInfo = vkinit::semaphore_submit_info(VK_PIPELINE_STAGE_2_ALL_GRAPHICS_BIT_KHR, getSwapchainImageData(nextSwapchainImageIndex).renderSemaphore);
 
     const VkSubmitInfo2 submitInfo = vkinit::submit_info(&bufferSubmitInfo, &signalInfo, &waitInfo);
 
@@ -132,7 +134,7 @@ void VulkanEngine::draw() {
     presentInfo.pNext = nullptr;
     presentInfo.pSwapchains = &_swapchain;
     presentInfo.swapchainCount = 1;
-    presentInfo.pWaitSemaphores = &_frames[nextSwapchainImageIndex].renderSemaphore;
+    presentInfo.pWaitSemaphores = &getSwapchainImageData(nextSwapchainImageIndex).renderSemaphore;
     presentInfo.waitSemaphoreCount = 1;
     presentInfo.pImageIndices = &nextSwapchainImageIndex;
     VK_CHECK(vkQueuePresentKHR(_graphicsQueue, &presentInfo));
@@ -249,7 +251,8 @@ void VulkanEngine::createSwapchain(std::uint32_t width, std::uint32_t height) {
     _swapchainImages = swapchain.get_images().value();
     _swapchainImageViews = swapchain.get_image_views().value();
 
-    _frames.resize(_swapchainImages.size());
+    _frames.resize(2);
+    _swapchainImageData.resize(_swapchainImages.size());
 }
 
 void VulkanEngine::destroySwapchain() {
@@ -282,6 +285,8 @@ void VulkanEngine::initSynchronizationStructures() {
     for (auto& frame : _frames) {
         VK_CHECK(vkCreateFence(_logicalDevice, &fenceCreateInfo, nullptr, &frame.renderFence));
         VK_CHECK(vkCreateSemaphore(_logicalDevice, &semaphoreCreateInfo, nullptr, &frame.swapchainSemaphore));
-        VK_CHECK(vkCreateSemaphore(_logicalDevice, &semaphoreCreateInfo, nullptr, &frame.renderSemaphore));
+    }
+    for (auto& imageData : _swapchainImageData) {
+        VK_CHECK(vkCreateSemaphore(_logicalDevice, &semaphoreCreateInfo, nullptr, &imageData.renderSemaphore));
     }
 }
