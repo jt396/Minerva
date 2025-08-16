@@ -1,0 +1,21 @@
+- VkInstance represents the API context
+- VkPhysicalDevice represents a physical GPU in the system
+- VkDevice represents a device driver which serves as our main way of interacting with said GPU
+	Holding multiple instances of this (one per GPU) allows you to switch which GPU you use
+
+---
+
+- You allocate a command buffer from a command pool
+	Record commands into the buffer
+	Submit the buffer to a queue which starts executing the commands
+- Recording commands is cheap and can be done via multiple threads but can only be submitted from one
+- It's common to have 3 queue families: drawing the frame, async compute and one for data-transfer
+- Command pools are created from the device and require the index of the family to which they belong
+
+---
+
+* Note: for some reason changing the required cmake version from 3.8 to 4.0 alters the structure
+	of the project/solution and causes the SDL project to break as it can't find runtime-check related symbols?
+
+
+
