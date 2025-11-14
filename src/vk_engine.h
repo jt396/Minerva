@@ -4,6 +4,9 @@
 #pragma once
 
 #include <vk_types.h>
+#include <vk_descriptors.h>
+
+#include <vk_deletionQueue.hpp>
 
 struct SDL_Window;
 
@@ -11,16 +14,18 @@ namespace mnv {
     class VulkanEngine {
     private:
         struct FrameData {
-            VkCommandPool                   commandPool;
-            VkCommandBuffer                 commandBuffer;
+            VkCommandPool       commandPool;
+            VkCommandBuffer     commandBuffer;
 
-            VkSemaphore                     swapchainSemaphore;
-            VkFence                         renderFence;
+            VkSemaphore         swapchainSemaphore;
+            VkFence             renderFence;
+
+            mnv::DeletionQueue  deletionQueue;
         };
         struct SwapchainImageData {
             // The semaphore to signal rendering completion must be stored at a swapchain image granularity,
             // not inline with the number of frames the application wants to have inflight.
-            VkSemaphore                     renderSemaphore;
+            VkSemaphore renderSemaphore;
         };
 
     public:
@@ -43,12 +48,26 @@ namespace mnv {
         std::vector<VkImageView>    _swapchainImageViews;
         VkExtent2D                  _swapchainExtent;
 
+        VmaAllocator                _vmaAllocator;
+
         std::vector<FrameData>          _frames;
         std::vector<SwapchainImageData> _swapchainImageData;
         VkQueue                         _graphicsQueue;
         std::uint32_t                   _graphicsQueueFamilyIndex;
 
         SDL_Window*                 _window{ nullptr };
+
+        mnv::DeletionQueue          _mainDeletionQueue;
+
+        // Draw resources
+        mnv::AllocatedImage         _drawImage;
+        VkExtent2D                  _drawExtent;
+
+        DescriptorAllocator         globalDescriptorAllocator;
+        VkDescriptorSet             _drawImageDescriptor;
+        VkDescriptorSetLayout       _drawImageDescriptorLayout;
+        VkPipeline                  _gradientPipeline;
+        VkPipelineLayout            _gradientPipelineLayout;
 
         static VulkanEngine&        Get();
 
@@ -60,6 +79,7 @@ namespace mnv {
 
                                     //draw loop
         void                        draw();
+        void                        drawBackground(VkCommandBuffer commandBuffer);
 
                                     //run main loop
         void                        run();
@@ -73,6 +93,9 @@ namespace mnv {
         void                        createSwapchain(std::uint32_t width, std::uint32_t height);
         void                        destroySwapchain();
         void                        initCommands();
+        void                        initDescriptors();
+        void                        initPipelines();
+        void                        initBackgroundPipelines();
         void                        initSynchronizationStructures();
     };
 }

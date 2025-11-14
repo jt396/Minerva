@@ -1,3 +1,6 @@
+===
+CHAPTER 1
+===
 - VkInstance represents the API context
 - VkPhysicalDevice represents a physical GPU in the system
 - VkDevice represents a device driver which serves as our main way of interacting with said GPU
@@ -17,5 +20,18 @@
 * Note: for some reason changing the required cmake version from 3.8 to 4.0 alters the structure
 	of the project/solution and causes the SDL project to break as it can't find runtime-check related symbols?
 
+
+===
+CHAPTER 2
+===
+
+- Instead of the current DeletionQueue structure, it would be better to store the Vulkan handles and then delete them.
+	Store BufferHandles, ImageHandles etc. in separate arrays, then delete them in a loop?
+
+- Use LINEAR tililng if we need to read image data from CPU
+
+- HLSL can also be compiled to SpirV
+
+- DescriptorSets describe things like images and buffers required by a shader
 
 
