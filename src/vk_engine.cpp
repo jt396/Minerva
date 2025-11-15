@@ -1,6 +1,10 @@
 ﻿// Includes
 #include "vk_engine.h"
 
+#include "imgui.h"
+#include "imgui_impl_sdl2.h"
+#include "imgui_impl_vulkan.h"
+
 #include <SDL.h>
 #include <SDL_vulkan.h>
 
@@ -56,6 +60,7 @@ void VulkanEngine::init() {
     initSynchronizationStructures();
     initDescriptors();
     initPipelines();
+    initImgui();
 
     // everything went fine
     _isInitialized = true;
@@ -105,27 +110,7 @@ void VulkanEngine::draw() {
 
     // Now commands have finished executing, we can safely reset the buffer and being recording into it anew.
     VK_CHECK(vkResetCommandBuffer(commandBuffer, 0));
-// ---
-#if 0
-    // Begin command buffer recording.
-    VkCommandBufferBeginInfo commandBufferBeginInfo = vkinit::command_buffer_begin_info(VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT);
-    VK_CHECK(vkBeginCommandBuffer(commandBuffer, &commandBufferBeginInfo));
 
-    // Transition the image into something writeable before rendering.
-    vkutil::transitionImage(commandBuffer, _swapchainImages[nextSwapchainImageIndex], VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
-
-    // Create a clear colour from the frame number, will flash at 120fps.
-    const float flash = std::abs(std::sin(_frameNumber / 120.f));
-    VkClearColorValue clearColor { 0.0f, 0.0f, flash, 0.0f };
-
-    VkImageSubresourceRange clearRange = vkinit::image_subresource_range(VK_IMAGE_ASPECT_COLOR_BIT);
-    vkCmdClearColorImage(commandBuffer, _swapchainImages[nextSwapchainImageIndex], VK_IMAGE_LAYOUT_GENERAL, &clearColor, 1, &clearRange);
-
-    // Transition the image back to a presentable format.
-    vkutil::transitionImage(commandBuffer, _swapchainImages[nextSwapchainImageIndex], VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
-
-    VK_CHECK(vkEndCommandBuffer(commandBuffer));
-#else
     _drawExtent.width = _drawImage.imageExtent.width;
     _drawExtent.height = _drawImage.imageExtent.height;
 
@@ -139,20 +124,22 @@ void VulkanEngine::draw() {
 
     drawBackground(commandBuffer);
 
-    //transition the draw image and the swapchain image into their correct transfer layouts
+    // transition the draw image and the swapchain image into their correct transfer layouts
     vkutil::transitionImage(commandBuffer, _drawImage.image, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
     vkutil::transitionImage(commandBuffer, _swapchainImages[nextSwapchainImageIndex], VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
 
     // execute a copy from the draw image into the swapchain
     vkutil::copyImageToImage(commandBuffer, _drawImage.image, _swapchainImages[nextSwapchainImageIndex], _drawExtent, _swapchainExtent);
 
-    // set swapchain image layout to Present so we can show it on the screen
-    vkutil::transitionImage(commandBuffer, _swapchainImages[nextSwapchainImageIndex], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+    vkutil::transitionImage(commandBuffer, _swapchainImages[nextSwapchainImageIndex], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+
+    drawImgui(commandBuffer, _swapchainImageViews[nextSwapchainImageIndex]);
+
+    vkutil::transitionImage(commandBuffer, _swapchainImages[nextSwapchainImageIndex], VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
 
     //finalize the command buffer (we can no longer add commands, but it can now be executed)
     VK_CHECK(vkEndCommandBuffer(commandBuffer));
-#endif
-// ---
+
     // Prepare to submit commands to the queue.
     // We wait on the present semaphore, this signals us when the swapchain is ready.
     // We then signal on the render semaphore, this signals that rendering is complete.
@@ -197,6 +184,15 @@ void VulkanEngine::drawBackground(VkCommandBuffer commandBuffer) {
     vkCmdDispatch(commandBuffer, std::ceil(_drawExtent.width / 16.0f), std::ceil(_drawExtent.height / 16.0f), 1);
 }
 
+void VulkanEngine::drawImgui(VkCommandBuffer commandBuffer, VkImageView targetImageView) {
+    VkRenderingAttachmentInfo colorAttachment = vkinit::attachment_info(targetImageView, nullptr, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+    VkRenderingInfo renderInfo = vkinit::rendering_info(_swapchainExtent, &colorAttachment, nullptr);
+
+    vkCmdBeginRendering(commandBuffer, &renderInfo);
+        ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), commandBuffer);
+    vkCmdEndRendering(commandBuffer);
+}
+
 void VulkanEngine::run() {
     SDL_Event event;
     bool bQuit = false;
@@ -228,8 +224,36 @@ void VulkanEngine::run() {
             continue;
         }
 
+        // imgui
+        ImGui_ImplVulkan_NewFrame();
+        ImGui_ImplSDL2_NewFrame();
+
+        ImGui::NewFrame();
+        ImGui::ShowDemoWindow();
+        ImGui::Render();
+        // ---
+
         draw();
     }
+}
+
+void VulkanEngine::immediateSubmit(std::function<void(VkCommandBuffer cmd)>&& function) {
+    VK_CHECK(vkResetFences(_logicalDevice, 1, &_immFence));
+    VK_CHECK(vkResetCommandBuffer(_immCommandBuffer, 0));
+
+    VkCommandBuffer commandBuffer = _immCommandBuffer;
+    const VkCommandBufferBeginInfo cmdBeginInfo = vkinit::command_buffer_begin_info(VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT);
+
+    VK_CHECK(vkBeginCommandBuffer(commandBuffer, &cmdBeginInfo));
+        function(commandBuffer);
+    VK_CHECK(vkEndCommandBuffer(commandBuffer));
+
+    VkCommandBufferSubmitInfo cmdinfo = vkinit::command_buffer_submit_info(commandBuffer);
+    const VkSubmitInfo2 submit = vkinit::submit_info(&cmdinfo, nullptr, nullptr);
+
+    // Submit command buffer to the queue and execute it. _renderFence will now block until the graphic commands finish execution
+    VK_CHECK(vkQueueSubmit2(_graphicsQueue, 1, &submit, _immFence));
+    VK_CHECK(vkWaitForFences(_logicalDevice, 1, &_immFence, true, 9999999999));
 }
 
 void VulkanEngine::initVulkan() {
@@ -376,6 +400,17 @@ void VulkanEngine::initCommands() {
         const VkCommandBufferAllocateInfo commandBufferAllocInfo = vkinit::command_buffer_allocate_info(frame.commandPool, 1);
         VK_CHECK(vkAllocateCommandBuffers(_logicalDevice, &commandBufferAllocInfo, &frame.commandBuffer));
     }
+
+    // imgui
+    VK_CHECK(vkCreateCommandPool(_logicalDevice, &commandPoolInfo, nullptr, &_immCommandPool));
+
+    VkCommandBufferAllocateInfo cmdAllocInfo = vkinit::command_buffer_allocate_info(_immCommandPool, 1);
+    VK_CHECK(vkAllocateCommandBuffers(_logicalDevice, &cmdAllocInfo, &_immCommandBuffer));
+
+    _mainDeletionQueue.pushFunction([=]() {
+        vkDestroyCommandPool(_logicalDevice, _immCommandPool, nullptr);
+    });
+    // ---
 }
 
 void VulkanEngine::initDescriptors() {
@@ -467,4 +502,69 @@ void VulkanEngine::initSynchronizationStructures() {
     for (auto& imageData : _swapchainImageData) {
         VK_CHECK(vkCreateSemaphore(_logicalDevice, &semaphoreCreateInfo, nullptr, &imageData.renderSemaphore));
     }
+
+    // imgui
+    VK_CHECK(vkCreateFence(_logicalDevice, &fenceCreateInfo, nullptr, &_immFence));
+    _mainDeletionQueue.pushFunction([=]() { vkDestroyFence(_logicalDevice, _immFence, nullptr); });
+    // ---
+}
+
+void VulkanEngine::initImgui() {
+    // 1: Create descriptor pool for imgui; the size of the pool is very large but it's copied from imgui demo.
+    const VkDescriptorPoolSize pool_sizes[] = {
+        { VK_DESCRIPTOR_TYPE_SAMPLER, 1000 },
+        { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1000 },
+        { VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1000 },
+        { VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1000 },
+        { VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER, 1000 },
+        { VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER, 1000 },
+        { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1000 },
+        { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1000 },
+        { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 1000 },
+        { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC, 1000 },
+        { VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT, 1000 }
+    };
+
+    VkDescriptorPoolCreateInfo pool_info = {};
+    pool_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    pool_info.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
+    pool_info.maxSets = 1000;
+    pool_info.poolSizeCount = static_cast<uint32_t>(std::size(pool_sizes));
+    pool_info.pPoolSizes = pool_sizes;
+
+    VkDescriptorPool imguiPool;
+    VK_CHECK(vkCreateDescriptorPool(_logicalDevice, &pool_info, nullptr, &imguiPool));
+
+    // 2: Initialize imgui library
+    // Initialize the core structures of imgui
+    ImGui::CreateContext();
+
+    // Initialize imgui for SDL
+    ImGui_ImplSDL2_InitForVulkan(_window);
+
+    // Initializes imgui for Vulkan
+    ImGui_ImplVulkan_InitInfo init_info = {};
+    init_info.Instance = _instance;
+    init_info.PhysicalDevice = _physicalDevice;
+    init_info.Device = _logicalDevice;
+    init_info.Queue = _graphicsQueue; // MAYDO: This could be a separte queue? Would also need updating in immediateSubmit()?
+    init_info.DescriptorPool = imguiPool;
+    init_info.MinImageCount = 3;
+    init_info.ImageCount = 3;
+    init_info.UseDynamicRendering = true;
+
+    // Dynamic rendering parameters for imgui
+    init_info.PipelineRenderingCreateInfo = { .sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO };
+    init_info.PipelineRenderingCreateInfo.colorAttachmentCount = 1;
+    init_info.PipelineRenderingCreateInfo.pColorAttachmentFormats = &_swapchainImageFormat;
+    init_info.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
+
+    ImGui_ImplVulkan_Init(&init_info);
+    ImGui_ImplVulkan_CreateFontsTexture();
+
+    // Destroy the imgui-related structures
+    _mainDeletionQueue.pushFunction([=]() {
+        ImGui_ImplVulkan_Shutdown();
+        vkDestroyDescriptorPool(_logicalDevice, imguiPool, nullptr);
+    });
 }

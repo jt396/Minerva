@@ -69,6 +69,12 @@ namespace mnv {
         VkPipeline                  _gradientPipeline;
         VkPipelineLayout            _gradientPipelineLayout;
 
+        // For use with imgui
+        VkFence                     _immFence;
+        VkCommandBuffer             _immCommandBuffer;
+        VkCommandPool               _immCommandPool;
+        // ---
+
         static VulkanEngine&        Get();
 
                                     //initializes everything in the engine
@@ -80,12 +86,16 @@ namespace mnv {
                                     //draw loop
         void                        draw();
         void                        drawBackground(VkCommandBuffer commandBuffer);
+        void                        drawImgui(VkCommandBuffer commandBuffer, VkImageView targetImageView);
 
                                     //run main loop
         void                        run();
 
+        //inline std::size_t          getCurrentFrameIndex
         inline FrameData&           getCurrentFrame() { return _frames[_frameNumber % _frames.size()]; }
         inline SwapchainImageData&  getSwapchainImageData(std::size_t index) { return _swapchainImageData[index % _swapchainImageData.size()]; }
+
+        void                        immediateSubmit(std::function<void(VkCommandBuffer cmd)>&& function);
 
     private:
         void                        initVulkan();
@@ -97,5 +107,7 @@ namespace mnv {
         void                        initPipelines();
         void                        initBackgroundPipelines();
         void                        initSynchronizationStructures();
+
+        void                        initImgui();
     };
 }
