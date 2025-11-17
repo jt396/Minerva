@@ -145,8 +145,8 @@ void VulkanEngine::draw() {
     // We then signal on the render semaphore, this signals that rendering is complete.
     VkCommandBufferSubmitInfo bufferSubmitInfo = vkinit::command_buffer_submit_info(commandBuffer);
 
-    VkSemaphoreSubmitInfo waitInfo = vkinit::semaphore_submit_info(VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT_KHR, getCurrentFrame().swapchainSemaphore);
     VkSemaphoreSubmitInfo signalInfo = vkinit::semaphore_submit_info(VK_PIPELINE_STAGE_2_ALL_GRAPHICS_BIT_KHR, getSwapchainImageData(nextSwapchainImageIndex).renderSemaphore);
+    VkSemaphoreSubmitInfo waitInfo = vkinit::semaphore_submit_info(VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT_KHR, getCurrentFrame().swapchainSemaphore);
 
     const VkSubmitInfo2 submitInfo = vkinit::submit_info(&bufferSubmitInfo, &signalInfo, &waitInfo);
 
@@ -179,6 +179,11 @@ void VulkanEngine::drawBackground(VkCommandBuffer commandBuffer) {
 
     // bind the descriptor set containing the draw image for the compute pipeline
     vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, _gradientPipelineLayout, 0, 1, &_drawImageDescriptor, 0, nullptr);
+
+    ComputePushConstants pushConstants;
+    pushConstants.data0 = glm::vec4(1.f, 0.f, 0.f, 1.f);
+    pushConstants.data1 = glm::vec4(0.f, 0.f, 1.f, 1.f);
+    vkCmdPushConstants(commandBuffer, _gradientPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(ComputePushConstants), &pushConstants);
 
     // execute the compute pipeline dispatch. We are using 16x16 workgroup size so we need to divide by it
     vkCmdDispatch(commandBuffer, std::ceil(_drawExtent.width / 16.0f), std::ceil(_drawExtent.height / 16.0f), 1);
@@ -455,15 +460,22 @@ void VulkanEngine::initPipelines() {
 
 void VulkanEngine::initBackgroundPipelines() {
     VkShaderModule computeDrawShader;
-    if (!mnv::loadShaderModule("../../shaders/gradient.comp.spv", _logicalDevice, &computeDrawShader)) {
+    if (!mnv::loadShaderModule("../../shaders/gradient_color.comp.spv", _logicalDevice, &computeDrawShader)) {
         fmt::print("Error when building the compute shader \n");
     }
 
+    VkPushConstantRange pushConstants {};
+    pushConstants.offset = 0;
+    pushConstants.size = sizeof(ComputePushConstants);
+    pushConstants.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+
     VkPipelineLayoutCreateInfo computeLayout {};
-        computeLayout.sType          = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-        computeLayout.pNext          = nullptr;
-        computeLayout.pSetLayouts    = &_drawImageDescriptorLayout;
-        computeLayout.setLayoutCount = 1;
+        computeLayout.sType                     = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+        computeLayout.pNext                     = nullptr;
+        computeLayout.pSetLayouts               = &_drawImageDescriptorLayout;
+        computeLayout.setLayoutCount            = 1;
+        computeLayout.pPushConstantRanges       = &pushConstants;
+        computeLayout.pushConstantRangeCount    = 1;
     VK_CHECK(vkCreatePipelineLayout(_logicalDevice, &computeLayout, nullptr, &_gradientPipelineLayout));
 
     VkPipelineShaderStageCreateInfo stageInfo {};

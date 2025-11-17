@@ -34,4 +34,5 @@ CHAPTER 2
 
 - DescriptorSets describe things like images and buffers required by a shader
 
+- Push Constant: allows for a small amount of data to be sent to the GPU; for example per object index values or matrices that change per object
 

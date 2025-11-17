@@ -8,6 +8,8 @@
 
 #include <vk_deletionQueue.hpp>
 
+#include <string>
+
 struct SDL_Window;
 
 namespace mnv {
@@ -27,6 +29,23 @@ namespace mnv {
             // not inline with the number of frames the application wants to have inflight.
             VkSemaphore renderSemaphore;
         };
+
+        struct ComputePushConstants {
+            glm::vec4 data0;
+            glm::vec4 data1;
+            glm::vec4 data2;
+            glm::vec4 data3;
+        };
+        struct ComputeEffect {
+            std::string             name;
+
+            VkPipeline              pipeline;
+            VkPipelineLayout        layout;
+
+            ComputePushConstants    data;
+        };
+        std::vector<ComputeEffect>  backgroundEffects;
+        std::size_t                 currentBackgroundEffect {0};
 
     public:
 
@@ -91,8 +110,11 @@ namespace mnv {
                                     //run main loop
         void                        run();
 
-        //inline std::size_t          getCurrentFrameIndex
+        std::size_t currentswapimage = 0;
+
+        inline std::size_t          getCurrentFrameIndex() const { return _frameNumber % _frames.size(); }
         inline FrameData&           getCurrentFrame() { return _frames[_frameNumber % _frames.size()]; }
+        inline FrameData&           getNextFrame() { return _frames[(_frameNumber+1) % _frames.size()]; }
         inline SwapchainImageData&  getSwapchainImageData(std::size_t index) { return _swapchainImageData[index % _swapchainImageData.size()]; }
 
         void                        immediateSubmit(std::function<void(VkCommandBuffer cmd)>&& function);
