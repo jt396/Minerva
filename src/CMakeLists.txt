@@ -7,6 +7,7 @@ add_executable (Minerva
   vk_pipelines.cpp
   vk_engine.cpp
   vk_loader.cpp
+  mnv_pipelines.cpp
   camera.cpp
 )
 

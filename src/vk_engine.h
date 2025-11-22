@@ -87,6 +87,8 @@ namespace mnv {
         VkDescriptorSetLayout       _drawImageDescriptorLayout;
         VkPipeline                  _gradientPipeline;
         VkPipelineLayout            _gradientPipelineLayout;
+        VkPipeline                  _trianglePipeline;
+        VkPipelineLayout            _trianglePipelineLayout;
 
         // For use with imgui
         VkFence                     _immFence;
@@ -105,6 +107,7 @@ namespace mnv {
                                     //draw loop
         void                        draw();
         void                        drawBackground(VkCommandBuffer commandBuffer);
+        void                        drawGeometry(VkCommandBuffer commandBuffer);
         void                        drawImgui(VkCommandBuffer commandBuffer, VkImageView targetImageView);
 
                                     //run main loop
@@ -128,6 +131,7 @@ namespace mnv {
         void                        initDescriptors();
         void                        initPipelines();
         void                        initBackgroundPipelines();
+        void                        initTrianglePipeline();
         void                        initSynchronizationStructures();
 
         void                        initImgui();

@@ -12,6 +12,7 @@
 #include "vk_types.h"
 #include "vk_images.h"
 #include "vk_pipelines.h"
+#include "mnv_Pipelines.hpp"
 
 #define VMA_IMPLEMENTATION
 #include "vk_mem_alloc.h"
@@ -124,8 +125,12 @@ void VulkanEngine::draw() {
 
     drawBackground(commandBuffer);
 
+    vkutil::transitionImage(commandBuffer, _drawImage.image, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+
+    drawGeometry(commandBuffer);
+
     // transition the draw image and the swapchain image into their correct transfer layouts
-    vkutil::transitionImage(commandBuffer, _drawImage.image, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+    vkutil::transitionImage(commandBuffer, _drawImage.image, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
     vkutil::transitionImage(commandBuffer, _swapchainImages[nextSwapchainImageIndex], VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
 
     // execute a copy from the draw image into the swapchain
@@ -174,8 +179,10 @@ void VulkanEngine::drawBackground(VkCommandBuffer commandBuffer) {
     const float flash = std::abs(std::sin(_frameNumber / 120.f));
     const VkClearColorValue clearColor { 0.0f, 0.0f, flash, 0.0f };
 
+    ComputeEffect& effect = backgroundEffects[currentBackgroundEffect];
+
     // bind the gradient drawing compute pipeline
-    vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, _gradientPipeline);
+    vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, effect.pipeline);
 
     // bind the descriptor set containing the draw image for the compute pipeline
     vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, _gradientPipelineLayout, 0, 1, &_drawImageDescriptor, 0, nullptr);
@@ -187,6 +194,38 @@ void VulkanEngine::drawBackground(VkCommandBuffer commandBuffer) {
 
     // execute the compute pipeline dispatch. We are using 16x16 workgroup size so we need to divide by it
     vkCmdDispatch(commandBuffer, std::ceil(_drawExtent.width / 16.0f), std::ceil(_drawExtent.height / 16.0f), 1);
+}
+
+void VulkanEngine::drawGeometry(VkCommandBuffer commandBuffer) {
+    // Begin a render pass - connected to our draw image
+    VkRenderingAttachmentInfo colorAttachment = vkinit::attachment_info(_drawImage.view, nullptr, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+
+    VkRenderingInfo renderInfo = vkinit::rendering_info(_drawExtent, &colorAttachment, nullptr);
+    vkCmdBeginRendering(commandBuffer, &renderInfo);
+
+    vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, _trianglePipeline);
+
+    //set dynamic viewport and scissor
+    VkViewport viewport = {};
+        viewport.x = 0;
+        viewport.y = 0;
+        viewport.width = _drawExtent.width;
+        viewport.height = _drawExtent.height;
+        viewport.minDepth = 0.f;
+        viewport.maxDepth = 1.f;
+    vkCmdSetViewport(commandBuffer, 0, 1, &viewport);
+
+    VkRect2D scissor = {};
+        scissor.offset.x = 0;
+        scissor.offset.y = 0;
+        scissor.extent.width = _drawExtent.width;
+        scissor.extent.height = _drawExtent.height;
+    vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
+
+    // Draw command 3 vertices
+    vkCmdDraw(commandBuffer, 3, 1, 0, 0);
+
+    vkCmdEndRendering(commandBuffer);
 }
 
 void VulkanEngine::drawImgui(VkCommandBuffer commandBuffer, VkImageView targetImageView) {
@@ -234,7 +273,20 @@ void VulkanEngine::run() {
         ImGui_ImplSDL2_NewFrame();
 
         ImGui::NewFrame();
-        ImGui::ShowDemoWindow();
+        if (ImGui::Begin("background")) {
+            ComputeEffect& selected = backgroundEffects[currentBackgroundEffect];
+
+            ImGui::Text("Selected effect: ", selected.name);
+
+            //ImGui::SliderInt("Effect Index", &currentBackgroundEffect, 0, backgroundEffects.size() - 1);
+
+            ImGui::InputFloat4("data1", (float*)&selected.data.data0);
+            ImGui::InputFloat4("data2", (float*)&selected.data.data1);
+            ImGui::InputFloat4("data3", (float*)&selected.data.data2);
+            ImGui::InputFloat4("data4", (float*)&selected.data.data3);
+
+            ImGui::End();
+        }
         ImGui::Render();
         // ---
 
@@ -456,11 +508,17 @@ void VulkanEngine::initDescriptors() {
 
 void VulkanEngine::initPipelines() {
     initBackgroundPipelines();
+    initTrianglePipeline();
 }
 
 void VulkanEngine::initBackgroundPipelines() {
-    VkShaderModule computeDrawShader;
-    if (!mnv::loadShaderModule("../../shaders/gradient_color.comp.spv", _logicalDevice, &computeDrawShader)) {
+    VkShaderModule gradientShader;
+    if (!mnv::loadShaderModule("../../shaders/gradient_color.comp.spv", _logicalDevice, &gradientShader)) {
+        fmt::print("Error when building the compute shader \n");
+    }
+
+    VkShaderModule nightSkyShader;
+    if (!mnv::loadShaderModule("../../shaders/sky.comp.spv", _logicalDevice, &nightSkyShader)) {
         fmt::print("Error when building the compute shader \n");
     }
 
@@ -482,7 +540,7 @@ void VulkanEngine::initBackgroundPipelines() {
     stageInfo.sType  = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
     stageInfo.pNext  = nullptr;
     stageInfo.stage  = VK_SHADER_STAGE_COMPUTE_BIT;
-    stageInfo.module = computeDrawShader;
+    stageInfo.module = gradientShader;
     stageInfo.pName  = "main";
 
     VkComputePipelineCreateInfo computePipelineCreateInfo {};
@@ -490,13 +548,80 @@ void VulkanEngine::initBackgroundPipelines() {
         computePipelineCreateInfo.pNext  = nullptr;
         computePipelineCreateInfo.layout = _gradientPipelineLayout;
         computePipelineCreateInfo.stage  = stageInfo;
-    VK_CHECK(vkCreateComputePipelines(_logicalDevice, VK_NULL_HANDLE, 1, &computePipelineCreateInfo, nullptr, &_gradientPipeline));
 
-    vkDestroyShaderModule(_logicalDevice, computeDrawShader, nullptr);
+        ComputeEffect gradient {};
+        gradient.name = "gradient";
+        gradient.layout = _gradientPipelineLayout;
+        gradient.data = {};
+        // Default colours
+        gradient.data.data0 = glm::vec4(1.f, 0.f, 0.f, 1.f);
+        gradient.data.data1 = glm::vec4(0.f, 0.f, 1.f, 1.f);
+    VK_CHECK(vkCreateComputePipelines(_logicalDevice, VK_NULL_HANDLE, 1, &computePipelineCreateInfo, nullptr, &gradient.pipeline));
+
+    // Re-use majority of the information to create the sky shader
+    ComputeEffect sky {};
+    sky.name = "sky";
+    sky.layout = _gradientPipelineLayout;
+    sky.data = {};
+    sky.data.data0 = glm::vec4(0.1f, 0.2f, 0.4f, 0.97f);
+
+    VK_CHECK(vkCreateComputePipelines(_logicalDevice, VK_NULL_HANDLE, 1, &computePipelineCreateInfo, nullptr, &sky.pipeline));
+
+    backgroundEffects.emplace_back(gradient);
+    backgroundEffects.emplace_back(sky);
+
+    vkDestroyShaderModule(_logicalDevice, gradientShader, nullptr);
+    vkDestroyShaderModule(_logicalDevice, nightSkyShader, nullptr);
 
     _mainDeletionQueue.pushFunction([&]() {
         vkDestroyPipelineLayout(_logicalDevice, _gradientPipelineLayout, nullptr);
-        vkDestroyPipeline(_logicalDevice, _gradientPipeline, nullptr);
+        vkDestroyPipeline(_logicalDevice, gradient.pipeline, nullptr);
+        vkDestroyPipeline(_logicalDevice, sky.pipeline, nullptr);
+    });
+}
+
+void VulkanEngine::initTrianglePipeline() {
+    VkShaderModule triangleVertexShader;
+    if (!mnv::loadShaderModule("../../shaders/colored_triangle.vert.spv", _logicalDevice, &triangleVertexShader)) {
+        fmt::print("Error when building the triangle vertex shader module");
+    } else {
+        fmt::print("Triangle vertex shader succesfully loaded");
+    }
+
+    VkShaderModule triangleFragmentShader;
+    if (!mnv::loadShaderModule("../../shaders/colored_triangle.frag.spv", _logicalDevice, &triangleFragmentShader)) {
+        fmt::print("Error when building the triangle fragment shader module");
+    } else {
+        fmt::print("Triangle fragment shader succesfully loaded");
+    }
+
+    // Build the pipeline layout that controls the inputs/outputs of the shader
+    // We are not using descriptor sets or other systems yet, so no need to use anything other than empty default
+    VkPipelineLayoutCreateInfo pipelineLayoutCreateInfo = vkinit::pipeline_layout_create_info();
+    VK_CHECK(vkCreatePipelineLayout(_logicalDevice, &pipelineLayoutCreateInfo, nullptr, &_trianglePipelineLayout));
+
+    mnv::PipelineBuilder builder;
+        builder._pipelineLayout = _trianglePipelineLayout;
+        builder.SetShaders(triangleVertexShader, triangleFragmentShader);
+        builder.SetInputTopology(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
+        builder.SetPolygonMode(VK_POLYGON_MODE_FILL);
+        // No backface culling
+        builder.SetCullMode(VK_CULL_MODE_NONE, VK_FRONT_FACE_CLOCKWISE);
+        builder.DisableMultisampling();
+        builder.DisableBlending();
+        builder.DisableDepthTest();
+        // Connec the image format we'll draw into, taken from the draw image
+        builder.SetColorAttachmentFormat(_drawImage.imageFormat);
+        builder.SetDepthFormat(VK_FORMAT_UNDEFINED);
+    _trianglePipeline = builder.BuildPipeline(_logicalDevice);
+
+    // Clean up
+    vkDestroyShaderModule(_logicalDevice, triangleVertexShader, nullptr);
+    vkDestroyShaderModule(_logicalDevice, triangleFragmentShader, nullptr);
+
+    _mainDeletionQueue.pushFunction([&](){
+        vkDestroyPipelineLayout(_logicalDevice, _trianglePipelineLayout, nullptr);
+        vkDestroyPipeline(_logicalDevice, _trianglePipeline, nullptr);
     });
 }
 

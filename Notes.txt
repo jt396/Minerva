@@ -36,3 +36,11 @@ CHAPTER 2
 
 - Push Constant: allows for a small amount of data to be sent to the GPU; for example per object index values or matrices that change per object
 
+
+===
+CHAPTER 3
+===
+
+- We use dynamic state in the pipeline creation so that we don't have to constantly create new pipelines everytime we want to
+	change a single property about said pipeline
+
