@@ -44,3 +44,11 @@ CHAPTER 3
 - We use dynamic state in the pipeline creation so that we don't have to constantly create new pipelines everytime we want to
 	change a single property about said pipeline
 
+- Uniform Buffers (UBO) - only a small section can be accessed by the shader at any given time and is fast but read-only.
+	May get pre-loaded/cached by the GPU. Minimum size of 16K. Good for Material parameters and global configuraton.
+- Storage Buffers (SSBO) - fully generic read/write buffers. Will not get cached/pre-loaded by the GPU and modern GPUs insist on making these 4G minimum size.
+
+- If using Dynamic Rendering, you can control the offset into the buffer; this is best used in conjunction with SSBOs.
+
+
+

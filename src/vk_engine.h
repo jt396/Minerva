@@ -89,6 +89,9 @@ namespace mnv {
         VkPipelineLayout            _gradientPipelineLayout;
         VkPipeline                  _trianglePipeline;
         VkPipelineLayout            _trianglePipelineLayout;
+        VkPipeline                  _meshPipeline;
+        VkPipelineLayout            _meshPipelineLayout;
+        mnv::GPUMeshBuffers         _rectangle;
 
         // For use with imgui
         VkFence                     _immFence;
@@ -132,8 +135,14 @@ namespace mnv {
         void                        initPipelines();
         void                        initBackgroundPipelines();
         void                        initTrianglePipeline();
+        void                        initMeshPipeline();
         void                        initSynchronizationStructures();
+        void                        initDefaultData();
 
         void                        initImgui();
+
+        mnv::AllocatedBuffer        createBuffer(std::size_t size, VkBufferUsageFlags flags, VmaMemoryUsage usage);
+        void                        destroyBuffer(const AllocatedBuffer& buffer);
+        mnv::GPUMeshBuffers         uploadMesh(std::span<mnv::Vertex> vertices, std::span<std::uint32_t> indices);
     };
 }

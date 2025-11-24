@@ -38,4 +38,30 @@ namespace mnv {
         VkExtent3D      imageExtent;
         VkFormat        imageFormat;
     };
+
+    struct AllocatedBuffer {
+        VkBuffer            buffer;
+        VmaAllocation       allocation;
+        VmaAllocationInfo   info;
+    };
+
+    struct Vertex {
+        glm::vec3 position;
+        float     uvX;
+        glm::vec3 normal;
+        float     uvY;
+        glm::vec4 color;
+    };
+
+    // Holds resources needed for a mesh
+    struct GPUMeshBuffers {
+        AllocatedBuffer vertex;
+        AllocatedBuffer index;
+        VkDeviceAddress vertexAddress;
+    };
+    // Push constants for mesh object draws
+    struct GPUDrawPushConstants {
+        glm::mat4       worldMatrix;
+        VkDeviceAddress address;
+    };
 }
