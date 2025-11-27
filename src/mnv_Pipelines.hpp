@@ -17,6 +17,7 @@ namespace mnv {
         void                                    DisableBlending();
         void                                    SetColorAttachmentFormat(VkFormat format);
         void                                    SetDepthFormat(VkFormat format);
+        void                                    EnableDepthTest(bool depthWriteEnable, VkCompareOp op);
         void                                    DisableDepthTest();
 
         void                                    Clear();

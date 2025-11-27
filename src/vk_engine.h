@@ -5,6 +5,7 @@
 
 #include <vk_types.h>
 #include <vk_descriptors.h>
+#include "vk_loader.hpp"
 
 #include <vk_deletionQueue.hpp>
 
@@ -47,6 +48,8 @@ namespace mnv {
         std::vector<ComputeEffect>  backgroundEffects;
         std::size_t                 currentBackgroundEffect {0};
 
+        mnv::Meshes                 testMeshes;
+
     public:
 
         // handle our internal state
@@ -80,6 +83,7 @@ namespace mnv {
 
         // Draw resources
         mnv::AllocatedImage         _drawImage;
+        mnv::AllocatedImage         _depthImage;
         VkExtent2D                  _drawExtent;
 
         DescriptorAllocator         globalDescriptorAllocator;
@@ -87,11 +91,8 @@ namespace mnv {
         VkDescriptorSetLayout       _drawImageDescriptorLayout;
         VkPipeline                  _gradientPipeline;
         VkPipelineLayout            _gradientPipelineLayout;
-        VkPipeline                  _trianglePipeline;
-        VkPipelineLayout            _trianglePipelineLayout;
         VkPipeline                  _meshPipeline;
         VkPipelineLayout            _meshPipelineLayout;
-        mnv::GPUMeshBuffers         _rectangle;
 
         // For use with imgui
         VkFence                     _immFence;
@@ -125,6 +126,8 @@ namespace mnv {
 
         void                        immediateSubmit(std::function<void(VkCommandBuffer cmd)>&& function);
 
+        mnv::GPUMeshBuffers         uploadMesh(std::span<mnv::Vertex> vertices, std::span<std::uint32_t> indices);
+
     private:
         void                        initVulkan();
         void                        initSwapchain();
@@ -134,7 +137,6 @@ namespace mnv {
         void                        initDescriptors();
         void                        initPipelines();
         void                        initBackgroundPipelines();
-        void                        initTrianglePipeline();
         void                        initMeshPipeline();
         void                        initSynchronizationStructures();
         void                        initDefaultData();
@@ -143,6 +145,5 @@ namespace mnv {
 
         mnv::AllocatedBuffer        createBuffer(std::size_t size, VkBufferUsageFlags flags, VmaMemoryUsage usage);
         void                        destroyBuffer(const AllocatedBuffer& buffer);
-        mnv::GPUMeshBuffers         uploadMesh(std::span<mnv::Vertex> vertices, std::span<std::uint32_t> indices);
     };
 }

@@ -2,7 +2,7 @@
 add_executable (Minerva
   main.cpp
   vk_initializers.cpp
-  vk_images.cpp 
+  vk_images.cpp
   vk_descriptors.cpp
   vk_pipelines.cpp
   vk_engine.cpp
