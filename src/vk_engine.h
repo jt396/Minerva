@@ -54,6 +54,7 @@ namespace mnv {
 
         // handle our internal state
         bool                        _isInitialized{ false };
+        bool                        _resizeRequested{ false };
         int                         _frameNumber{ 0 };
         bool                        _stopRendering{ false };
 
@@ -85,6 +86,7 @@ namespace mnv {
         mnv::AllocatedImage         _drawImage;
         mnv::AllocatedImage         _depthImage;
         VkExtent2D                  _drawExtent;
+        float                       _renderScale{ 1.0f };
 
         DescriptorAllocator         globalDescriptorAllocator;
         VkDescriptorSet             _drawImageDescriptor;
@@ -145,5 +147,7 @@ namespace mnv {
 
         mnv::AllocatedBuffer        createBuffer(std::size_t size, VkBufferUsageFlags flags, VmaMemoryUsage usage);
         void                        destroyBuffer(const AllocatedBuffer& buffer);
+
+        void                        resizeSwapchain();
     };
 }

@@ -48,7 +48,7 @@ void VulkanEngine::init() {
     // We initialize SDL and create a window with it.
     SDL_Init(SDL_INIT_VIDEO);
 
-    SDL_WindowFlags window_flags = (SDL_WindowFlags)(SDL_WINDOW_VULKAN);
+    const SDL_WindowFlags window_flags = (SDL_WindowFlags)(SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE);
 
     _window = SDL_CreateWindow("Minerva",
                                SDL_WINDOWPOS_UNDEFINED,
@@ -113,43 +113,46 @@ void VulkanEngine::draw() {
 
     // Request next available image from swapchain.
     std::uint32_t nextSwapchainImageIndex;
-    VK_CHECK(vkAcquireNextImageKHR(_logicalDevice, _swapchain, helpers::FENCE_TIMEOUT_NS, getCurrentFrame().swapchainSemaphore, nullptr, &nextSwapchainImageIndex));
+    if (const VkResult err = vkAcquireNextImageKHR(_logicalDevice, _swapchain, helpers::FENCE_TIMEOUT_NS, getCurrentFrame().swapchainSemaphore, nullptr, &nextSwapchainImageIndex); err == VK_ERROR_OUT_OF_DATE_KHR) {
+        _resizeRequested = true;
+        return;
+    }
 
     VkCommandBuffer commandBuffer = getCurrentFrame().commandBuffer;
 
     // Now commands have finished executing, we can safely reset the buffer and being recording into it anew.
     VK_CHECK(vkResetCommandBuffer(commandBuffer, 0));
 
-    _drawExtent.width = _drawImage.imageExtent.width;
-    _drawExtent.height = _drawImage.imageExtent.height;
+    _drawExtent.height = std::min(_swapchainExtent.height, _drawImage.imageExtent.height) * _renderScale;
+    _drawExtent.width = std::min(_swapchainExtent.width, _drawImage.imageExtent.width) * _renderScale;
 
     // Begin command buffer recording.
     VkCommandBufferBeginInfo commandBufferBeginInfo = vkinit::command_buffer_begin_info(VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT);
     VK_CHECK(vkBeginCommandBuffer(commandBuffer, &commandBufferBeginInfo));
 
-    // transition our main draw image into general layout so we can write into it
-    // we will overwrite it all so we dont care about what was the older layout
-    vkutil::transitionImage(commandBuffer, _drawImage.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
+        // transition our main draw image into general layout so we can write into it
+        // we will overwrite it all so we dont care about what was the older layout
+        vkutil::transitionImage(commandBuffer, _drawImage.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
 
-    drawBackground(commandBuffer);
+        drawBackground(commandBuffer);
 
-    vkutil::transitionImage(commandBuffer, _drawImage.image, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
-    vkutil::transitionImage(commandBuffer, _depthImage.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL);
+        vkutil::transitionImage(commandBuffer, _drawImage.image, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+        vkutil::transitionImage(commandBuffer, _depthImage.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL);
 
-    drawGeometry(commandBuffer);
+        drawGeometry(commandBuffer);
 
-    // transition the draw image and the swapchain image into their correct transfer layouts
-    vkutil::transitionImage(commandBuffer, _drawImage.image, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
-    vkutil::transitionImage(commandBuffer, _swapchainImages[nextSwapchainImageIndex], VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+        // transition the draw image and the swapchain image into their correct transfer layouts
+        vkutil::transitionImage(commandBuffer, _drawImage.image, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+        vkutil::transitionImage(commandBuffer, _swapchainImages[nextSwapchainImageIndex], VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
 
-    // execute a copy from the draw image into the swapchain
-    vkutil::copyImageToImage(commandBuffer, _drawImage.image, _swapchainImages[nextSwapchainImageIndex], _drawExtent, _swapchainExtent);
+        // execute a copy from the draw image into the swapchain
+        vkutil::copyImageToImage(commandBuffer, _drawImage.image, _swapchainImages[nextSwapchainImageIndex], _drawExtent, _swapchainExtent);
 
-    vkutil::transitionImage(commandBuffer, _swapchainImages[nextSwapchainImageIndex], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+        vkutil::transitionImage(commandBuffer, _swapchainImages[nextSwapchainImageIndex], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
 
-    drawImgui(commandBuffer, _swapchainImageViews[nextSwapchainImageIndex]);
+        drawImgui(commandBuffer, _swapchainImageViews[nextSwapchainImageIndex]);
 
-    vkutil::transitionImage(commandBuffer, _swapchainImages[nextSwapchainImageIndex], VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+        vkutil::transitionImage(commandBuffer, _swapchainImages[nextSwapchainImageIndex], VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
 
     //finalize the command buffer (we can no longer add commands, but it can now be executed)
     VK_CHECK(vkEndCommandBuffer(commandBuffer));
@@ -178,7 +181,10 @@ void VulkanEngine::draw() {
     presentInfo.pWaitSemaphores = &getSwapchainImageData(nextSwapchainImageIndex).renderSemaphore;
     presentInfo.waitSemaphoreCount = 1;
     presentInfo.pImageIndices = &nextSwapchainImageIndex;
-    VK_CHECK(vkQueuePresentKHR(_graphicsQueue, &presentInfo));
+
+    if (const VkResult err = vkQueuePresentKHR(_graphicsQueue, &presentInfo); err == VK_ERROR_OUT_OF_DATE_KHR || err == VK_SUBOPTIMAL_KHR ) {
+        _resizeRequested = true;
+    }
 
     ++_frameNumber;
 }
@@ -296,12 +302,18 @@ void VulkanEngine::run() {
             continue;
         }
 
+        if (_resizeRequested) {
+            resizeSwapchain();
+        }
+
         // imgui
         ImGui_ImplVulkan_NewFrame();
         ImGui_ImplSDL2_NewFrame();
 
         ImGui::NewFrame();
         if (ImGui::Begin("background")) {
+            ImGui::SliderFloat("Render Scale", &_renderScale, 0.3f, 1.0f);
+
             ComputeEffect& selected = backgroundEffects[currentBackgroundEffect];
 
             ImGui::Text("Selected effect: ", selected.name);
@@ -408,31 +420,9 @@ void VulkanEngine::initVulkan() {
 
 void VulkanEngine::initSwapchain() {
     createSwapchain(_windowExtent.width, _windowExtent.height);
-}
-
-void VulkanEngine::createSwapchain(std::uint32_t width, std::uint32_t height) {
-    vkb::SwapchainBuilder builder {_physicalDevice, _logicalDevice, _surface};
-
-    _swapchainImageFormat = VK_FORMAT_B8G8R8A8_UNORM;
-
-    vkb::Swapchain swapchain = builder.set_desired_format(VkSurfaceFormatKHR {.format = _swapchainImageFormat, .colorSpace = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR })
-                                      // use vsync present mode
-                                      .set_desired_present_mode(VK_PRESENT_MODE_FIFO_KHR)
-                                      .set_desired_extent(width, height)
-                                      .add_image_usage_flags(VK_IMAGE_USAGE_TRANSFER_DST_BIT)
-                                      .build()
-                                      .value();
-
-    _swapchainExtent = swapchain.extent;
-    _swapchain = swapchain.swapchain;
-    _swapchainImages = swapchain.get_images().value();
-    _swapchainImageViews = swapchain.get_image_views().value();
-
-    _frames.resize(2);
-    _swapchainImageData.resize(_swapchainImages.size());
 
     // Draw image size to match the window
-    const VkExtent3D drawImageExtent {
+    const VkExtent3D drawImageExtent{
         .width = _windowExtent.width,
         .height = _windowExtent.height,
         .depth = 1
@@ -442,7 +432,7 @@ void VulkanEngine::createSwapchain(std::uint32_t width, std::uint32_t height) {
     _drawImage.imageFormat = VK_FORMAT_R16G16B16A16_SFLOAT;
     _drawImage.imageExtent = drawImageExtent;
 
-    VkImageUsageFlags drawImageUsage {};
+    VkImageUsageFlags drawImageUsage{};
     drawImageUsage |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
     drawImageUsage |= VK_IMAGE_USAGE_TRANSFER_DST_BIT;
     drawImageUsage |= VK_IMAGE_USAGE_STORAGE_BIT;
@@ -465,7 +455,7 @@ void VulkanEngine::createSwapchain(std::uint32_t width, std::uint32_t height) {
     _depthImage.imageFormat = VK_FORMAT_D32_SFLOAT;
     _depthImage.imageExtent = drawImageExtent;
 
-    VkImageUsageFlags depthImageUsages {};
+    VkImageUsageFlags depthImageUsages{};
     depthImageUsages |= VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
 
     VkImageCreateInfo depthImageCreateInfo = vkinit::image_create_info(_depthImage.imageFormat, depthImageUsages, drawImageExtent);
@@ -477,13 +467,35 @@ void VulkanEngine::createSwapchain(std::uint32_t width, std::uint32_t height) {
     VK_CHECK(vkCreateImageView(_logicalDevice, &depthImageViewCreateInfo, nullptr, &_depthImage.view));
     // ---
 
-    _mainDeletionQueue.pushFunction([=] () {
+    _mainDeletionQueue.pushFunction([=]() {
         vkDestroyImageView(_logicalDevice, _drawImage.view, nullptr);
         vmaDestroyImage(_vmaAllocator, _drawImage.image, _drawImage.allocation);
 
         vkDestroyImageView(_logicalDevice, _depthImage.view, nullptr);
         vmaDestroyImage(_vmaAllocator, _depthImage.image, _depthImage.allocation);
     });
+}
+
+void VulkanEngine::createSwapchain(std::uint32_t width, std::uint32_t height) {
+    vkb::SwapchainBuilder builder {_physicalDevice, _logicalDevice, _surface};
+
+    _swapchainImageFormat = VK_FORMAT_B8G8R8A8_UNORM;
+
+    vkb::Swapchain swapchain = builder.set_desired_format(VkSurfaceFormatKHR {.format = _swapchainImageFormat, .colorSpace = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR })
+                                      // use vsync present mode
+                                      .set_desired_present_mode(VK_PRESENT_MODE_FIFO_KHR)
+                                      .set_desired_extent(width, height)
+                                      .add_image_usage_flags(VK_IMAGE_USAGE_TRANSFER_DST_BIT)
+                                      .build()
+                                      .value();
+
+    _swapchainExtent = swapchain.extent;
+    _swapchain = swapchain.swapchain;
+    _swapchainImages = swapchain.get_images().value();
+    _swapchainImageViews = swapchain.get_image_views().value();
+
+    _frames.resize(2);
+    _swapchainImageData.resize(_swapchainImages.size());
 }
 
 mnv::AllocatedBuffer VulkanEngine::createBuffer(std::size_t size, VkBufferUsageFlags flags, VmaMemoryUsage usage) {
@@ -504,6 +516,20 @@ mnv::AllocatedBuffer VulkanEngine::createBuffer(std::size_t size, VkBufferUsageF
 
 void VulkanEngine::destroyBuffer(const mnv::AllocatedBuffer& buffer) {
     vmaDestroyBuffer(_vmaAllocator, buffer.buffer, buffer.allocation);
+}
+
+void VulkanEngine::resizeSwapchain() {
+    vkDeviceWaitIdle(_logicalDevice);
+
+    destroySwapchain();
+        int width;
+        int height;
+        SDL_GetWindowSize(_window, &width, &height);
+        _windowExtent.width = width;
+        _windowExtent.height = height;
+    createSwapchain(_windowExtent.width, _windowExtent.height);
+
+    _resizeRequested = false;
 }
 
 // TODO: This whole operation - using a staging buffer - would be best moved to a background thread
@@ -725,7 +751,7 @@ void VulkanEngine::initMeshPipeline() {
     // No backface culling
     builder.SetCullMode(VK_CULL_MODE_NONE, VK_FRONT_FACE_CLOCKWISE);
     builder.DisableMultisampling();
-    builder.DisableBlending();
+    builder.EnableBlendingAdditive();
     builder.EnableDepthTest(true, VK_COMPARE_OP_GREATER_OR_EQUAL);
     // Connect the image format we'll draw into, taken from the draw image
     builder.SetColorAttachmentFormat(_drawImage.imageFormat);

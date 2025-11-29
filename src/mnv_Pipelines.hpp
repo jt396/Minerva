@@ -14,6 +14,8 @@ namespace mnv {
         void                                    SetPolygonMode(VkPolygonMode mode);
         void                                    SetCullMode(VkCullModeFlags cullMode, VkFrontFace frontFace);
         void                                    DisableMultisampling();
+        void                                    EnableBlendingAdditive();
+        void                                    EnableBlendingAlphaBlend();
         void                                    DisableBlending();
         void                                    SetColorAttachmentFormat(VkFormat format);
         void                                    SetDepthFormat(VkFormat format);

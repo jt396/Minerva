@@ -77,6 +77,28 @@ void mnv::PipelineBuilder::DisableBlending() {
     _colorBlendAttachment.blendEnable = VK_FALSE;
 }
 
+void mnv::PipelineBuilder::EnableBlendingAdditive() {
+    _colorBlendAttachment.colorWriteMask        = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+    _colorBlendAttachment.blendEnable           = VK_TRUE;
+    _colorBlendAttachment.srcColorBlendFactor   = VK_BLEND_FACTOR_SRC_ALPHA;
+    _colorBlendAttachment.dstColorBlendFactor   = VK_BLEND_FACTOR_ONE;
+    _colorBlendAttachment.colorBlendOp          = VK_BLEND_OP_ADD;
+    _colorBlendAttachment.srcAlphaBlendFactor   = VK_BLEND_FACTOR_ONE;
+    _colorBlendAttachment.dstAlphaBlendFactor   = VK_BLEND_FACTOR_ZERO;
+    _colorBlendAttachment.alphaBlendOp          = VK_BLEND_OP_ADD;
+}
+
+void mnv::PipelineBuilder::EnableBlendingAlphaBlend() {
+    _colorBlendAttachment.colorWriteMask        = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+    _colorBlendAttachment.blendEnable           = VK_TRUE;
+    _colorBlendAttachment.srcColorBlendFactor   = VK_BLEND_FACTOR_SRC_ALPHA;
+    _colorBlendAttachment.dstColorBlendFactor   = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+    _colorBlendAttachment.colorBlendOp          = VK_BLEND_OP_ADD;
+    _colorBlendAttachment.srcAlphaBlendFactor   = VK_BLEND_FACTOR_ONE;
+    _colorBlendAttachment.dstAlphaBlendFactor   = VK_BLEND_FACTOR_ZERO;
+    _colorBlendAttachment.alphaBlendOp          = VK_BLEND_OP_ADD;
+}
+
 void mnv::PipelineBuilder::Clear() {
     _inputAssembly          = { .sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO };
     _rasterizer             = { .sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO };
@@ -97,7 +119,6 @@ VkPipeline mnv::PipelineBuilder::BuildPipeline(VkDevice device) {
     viewportState.viewportCount = 1;
     viewportState.scissorCount  = 1;
 
-    // No transparency or blending, just write to the color attchment
     VkPipelineColorBlendStateCreateInfo colorBlending = { .sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO };
     colorBlending.pNext             = nullptr;
     colorBlending.logicOpEnable     = VK_FALSE;
@@ -109,7 +130,7 @@ VkPipeline mnv::PipelineBuilder::BuildPipeline(VkDevice device) {
     VkPipelineVertexInputStateCreateInfo _vertexInputInfo = { .sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO };
 
     // Create the actual pipeline, utilizes the above *Info structs
-    VkGraphicsPipelineCreateInfo pipelineInfo = { .sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO };    
+    VkGraphicsPipelineCreateInfo pipelineInfo = { .sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO };
     pipelineInfo.pNext                  = &_renderInfo;
     pipelineInfo.stageCount             = static_cast<uint32_t>(_shaderStages.size());
     pipelineInfo.pStages                = _shaderStages.data();
