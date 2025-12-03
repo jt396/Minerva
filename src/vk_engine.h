@@ -16,14 +16,26 @@ struct SDL_Window;
 namespace mnv {
     class VulkanEngine {
     private:
+        struct GPUSceneData {
+            glm::mat4 view;
+            glm::mat4 proj;
+            glm::mat4 viewProj;
+            glm::vec4 ambientColor;
+            glm::vec4 sunlightDirection; // w for sun power
+            glm::vec4 sunlightColor;
+        };
+        GPUSceneData            _sceneData;
+        VkDescriptorSetLayout   _gpuSceneDataDescriptorSetLayout;
+
         struct FrameData {
-            VkCommandPool       commandPool;
-            VkCommandBuffer     commandBuffer;
+            VkCommandPool                       commandPool;
+            VkCommandBuffer                     commandBuffer;
 
-            VkSemaphore         swapchainSemaphore;
-            VkFence             renderFence;
+            VkSemaphore                         swapchainSemaphore;
+            VkFence                             renderFence;
 
-            mnv::DeletionQueue  deletionQueue;
+            mnv::DeletionQueue                  deletionQueue;
+            mnv::DescriptorAllocatorGrowable    frameDescriptors;
         };
         struct SwapchainImageData {
             // The semaphore to signal rendering completion must be stored at a swapchain image granularity,
@@ -102,6 +114,18 @@ namespace mnv {
         VkCommandPool               _immCommandPool;
         // ---
 
+        // Textures
+        VkDescriptorSetLayout       _singleImageDescriptorLayout;
+
+        mnv::AllocatedImage         _whiteImage;
+        mnv::AllocatedImage         _blackImage;
+        mnv::AllocatedImage         _greyImage;
+        mnv::AllocatedImage         _errorCheckerboardImage;
+
+        VkSampler                   _defaultSamplerLinear;
+        VkSampler                   _defaultSamplerNearest;
+        // ---
+
         static VulkanEngine&        Get();
 
                                     //initializes everything in the engine
@@ -147,6 +171,10 @@ namespace mnv {
 
         mnv::AllocatedBuffer        createBuffer(std::size_t size, VkBufferUsageFlags flags, VmaMemoryUsage usage);
         void                        destroyBuffer(const AllocatedBuffer& buffer);
+
+        AllocatedImage              createImage(VkExtent3D size, VkFormat format, VkImageUsageFlags usage, bool mipmapped = false);
+        AllocatedImage              createImage(void* data, VkExtent3D size, VkFormat format, VkImageUsageFlags usage, bool mipmapped = false);
+        void                        destroyImage(const AllocatedImage& img);
 
         void                        resizeSwapchain();
     };
