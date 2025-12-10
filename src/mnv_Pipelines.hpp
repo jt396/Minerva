@@ -9,6 +9,7 @@ namespace mnv {
     public:
                                                 PipelineBuilder() { Clear(); }
 
+        void                                    SetPipelineLayout(VkPipelineLayout layout) { _pipelineLayout = layout; }
         void                                    SetShaders(VkShaderModule vertexShader, VkShaderModule fragmentShader);
         void                                    SetInputTopology(VkPrimitiveTopology topology);
         void                                    SetPolygonMode(VkPolygonMode mode);

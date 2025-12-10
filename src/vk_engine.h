@@ -14,6 +14,75 @@
 struct SDL_Window;
 
 namespace mnv {
+    struct GLTFMetallicRoughness {
+        MaterialPipeline        opaquePipeline;
+        MaterialPipeline        transparentPipeline;
+        VkDescriptorSetLayout   materialLayout;
+
+        // Use a 256byte alignment for now (massively wasteful though?)
+        struct MaterialConstants {
+            glm::vec4           colorFactor;
+            glm::vec4           metalRoughFactor;
+            glm::vec4           PADDING[14];
+        };
+
+        struct MaterialResources {
+            AllocatedImage      colorImage;
+            VkSampler           colorSampler;
+            AllocatedImage      metalRoughImage;
+            VkSampler           metalRoughSampler;
+            VkBuffer            dataBuffer;
+            std::uint32_t       dataBufferOffset;
+        };
+
+        DescriptorWriter        writer;
+
+        void                    buildPipelines(VulkanEngine* engine);
+        void                    clearResources(VkDevice device);
+        MaterialInstance        writeMaterial(VkDevice device, MaterialPass pass, const MaterialResources& resources, DescriptorAllocatorGrowable& descriptorAllocator);
+    };
+
+    // 'Architecture'...
+    struct RenderObject {
+        std::uint32_t       indexCount;
+        std::uint32_t       offset;
+        VkBuffer            indexBuffer;
+
+        MaterialInstance* material;
+
+        glm::mat4           transform;
+        VkDeviceAddress     vertexBufferAddress;
+    };
+
+    struct DrawContext {
+        std::vector<RenderObject> opaqueObjects;
+    };
+
+    // NOTE: Looks like what vkguide calls a "surface" is infact a SubMesh?
+    class MeshNode final : public Node {
+    public:
+        std::shared_ptr<MeshAsset> mesh;
+
+        virtual void Draw(const glm::mat4& topMatrix, DrawContext& ctx) final {
+            const glm::mat4 nodeMatrix = topMatrix * worldTransform;
+
+            for (auto& surface : mesh->surfaces) {
+                RenderObject object;
+                object.indexCount = surface.count;
+                object.offset = surface.startIndex;
+                object.indexBuffer = mesh->meshBuffers.index.buffer;
+                object.material = &surface.material->data;
+                object.transform = nodeMatrix;
+                object.vertexBufferAddress = mesh->meshBuffers.vertexAddress;
+                ctx.opaqueObjects.push_back(object);
+            }
+
+            // Recurse down
+            Node::Draw(topMatrix, ctx);
+        }
+    };
+    // ---
+
     class VulkanEngine {
     private:
         struct GPUSceneData {
@@ -24,8 +93,6 @@ namespace mnv {
             glm::vec4 sunlightDirection; // w for sun power
             glm::vec4 sunlightColor;
         };
-        GPUSceneData            _sceneData;
-        VkDescriptorSetLayout   _gpuSceneDataDescriptorSetLayout;
 
         struct FrameData {
             VkCommandPool                       commandPool;
@@ -100,13 +167,16 @@ namespace mnv {
         VkExtent2D                  _drawExtent;
         float                       _renderScale{ 1.0f };
 
-        DescriptorAllocator         globalDescriptorAllocator;
+        DescriptorAllocatorGrowable _globalDescriptorAllocator;
         VkDescriptorSet             _drawImageDescriptor;
         VkDescriptorSetLayout       _drawImageDescriptorLayout;
         VkPipeline                  _gradientPipeline;
         VkPipelineLayout            _gradientPipelineLayout;
         VkPipeline                  _meshPipeline;
         VkPipelineLayout            _meshPipelineLayout;
+
+        GPUSceneData                _sceneData;
+        VkDescriptorSetLayout       _gpuSceneDataDescriptorSetLayout;
 
         // For use with imgui
         VkFence                     _immFence;
@@ -124,6 +194,18 @@ namespace mnv {
 
         VkSampler                   _defaultSamplerLinear;
         VkSampler                   _defaultSamplerNearest;
+        // ---
+
+        // Default resources
+        MaterialInstance            _defaultMaterial;
+        GLTFMetallicRoughness       _metallicRoughnessMaterial;
+        // ---
+
+        // 'Architecture' rework
+        DrawContext                 _mainDrawContext;
+        std::unordered_map<std::string, std::shared_ptr<mnv::Node>> _loadedNodes;
+
+        void                        UpdateScene();
         // ---
 
         static VulkanEngine&        Get();

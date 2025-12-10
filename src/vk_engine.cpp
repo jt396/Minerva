@@ -36,7 +36,93 @@ namespace helpers {
     constexpr std::uint64_t FENCE_TIMEOUT_NS = 1000000000;
 }
 
-// Class impl
+// ===========================================================
+// GLTFMetallicRoughness
+// ===========================================================
+void mnv::GLTFMetallicRoughness::buildPipelines(VulkanEngine* engine) {
+    // TODO: Move loadShaderModule to some kind of mnv::utils namespace?
+    VkShaderModule meshVertexShader;
+    if (!mnv::loadShaderModule("../../shaders/mesh.vert.spv", engine->_logicalDevice, &meshVertexShader)) {
+        fmt::println("Error when building the triangle vertex shader module");
+    }
+
+    VkShaderModule meshFragShader;
+    if (!mnv::loadShaderModule("../../shaders/mesh.frag.spv", engine->_logicalDevice, &meshFragShader)) {
+        fmt::println("Error when building the triangle fragment shader module");
+    }
+
+    VkPushConstantRange matrixRange {};
+    matrixRange.offset      = 0;
+    matrixRange.size        = sizeof(GPUDrawPushConstants);
+    matrixRange.stageFlags  = VK_SHADER_STAGE_VERTEX_BIT;
+
+    DescriptorLayoutBuilder layoutBuilder;
+    layoutBuilder.addBinding(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
+    layoutBuilder.addBinding(1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+    layoutBuilder.addBinding(2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+
+    materialLayout = layoutBuilder.build(engine->_logicalDevice, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT);
+
+    VkDescriptorSetLayout layouts[] { engine->_gpuSceneDataDescriptorSetLayout, materialLayout };
+
+    VkPipelineLayoutCreateInfo meshLayoutInfo = vkinit::pipeline_layout_create_info();
+    meshLayoutInfo.setLayoutCount           = 2;
+    meshLayoutInfo.pSetLayouts              = layouts;
+    meshLayoutInfo.pPushConstantRanges      = &matrixRange;
+    meshLayoutInfo.pushConstantRangeCount   = 1;
+
+    VkPipelineLayout newLayout;
+    VK_CHECK(vkCreatePipelineLayout(engine->_logicalDevice, &meshLayoutInfo, nullptr, &newLayout));
+
+    // Build the stage-create-info for both vertex and fragment stages.
+    // This lets the pipeline know the shader modules per stage.
+    mnv::PipelineBuilder pipelineBuilder;
+    pipelineBuilder.SetPipelineLayout(newLayout);
+    pipelineBuilder.SetShaders(meshVertexShader, meshFragShader);
+    pipelineBuilder.SetInputTopology(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
+    pipelineBuilder.SetPolygonMode(VK_POLYGON_MODE_FILL);
+    pipelineBuilder.SetCullMode(VK_CULL_MODE_NONE, VK_FRONT_FACE_CLOCKWISE);
+    pipelineBuilder.DisableMultisampling();
+    pipelineBuilder.DisableBlending();
+    pipelineBuilder.EnableDepthTest(true, VK_COMPARE_OP_GREATER_OR_EQUAL);
+    pipelineBuilder.SetColorAttachmentFormat(engine->_drawImage.imageFormat);
+    pipelineBuilder.SetDepthFormat(engine->_depthImage.imageFormat);
+
+    // Build opaque pipeline
+    opaquePipeline.layout = newLayout;
+    opaquePipeline.pipeline = pipelineBuilder.BuildPipeline(engine->_logicalDevice);
+
+    // Now the transparent pipeline
+    pipelineBuilder.EnableBlendingAdditive();
+    pipelineBuilder.EnableDepthTest(false, VK_COMPARE_OP_GREATER_OR_EQUAL);
+
+    transparentPipeline.layout = newLayout;
+    transparentPipeline.pipeline = pipelineBuilder.BuildPipeline(engine->_logicalDevice);
+
+    vkDestroyShaderModule(engine->_logicalDevice, meshFragShader, nullptr);
+    vkDestroyShaderModule(engine->_logicalDevice, meshVertexShader, nullptr);
+}
+
+mnv::MaterialInstance mnv::GLTFMetallicRoughness::writeMaterial(VkDevice device, MaterialPass pass, const MaterialResources& resources, DescriptorAllocatorGrowable& descriptorAllocator) {
+    MaterialInstance material {
+        .pipeline       = (pass == MaterialPass::Transparent) ? &transparentPipeline : &opaquePipeline,
+        .descriptorSet  = descriptorAllocator.allocate(device, materialLayout),
+        .passType       = pass
+    };
+
+    writer.clear();
+    writer.writeBuffer(0, resources.dataBuffer, sizeof(MaterialConstants), resources.dataBufferOffset, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
+    writer.writeImage(1, resources.colorImage.view, resources.colorSampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+    writer.writeImage(2, resources.metalRoughImage.view, resources.metalRoughSampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+    writer.updateSet(device, material.descriptorSet);
+
+    return material;
+}
+
+
+// ===========================================================
+// VulkanEngine
+// ===========================================================
 VulkanEngine& VulkanEngine::Get() {
     return *loadedEngine;
 }
@@ -106,6 +192,8 @@ void VulkanEngine::cleanup() {
 }
 
 void VulkanEngine::draw() {
+    UpdateScene();
+
     // Wait for the GPU to finish the current frame before trying to submit the next.
     VK_CHECK(vkWaitForFences(_logicalDevice, 1, &getCurrentFrame().renderFence, VK_TRUE, UINT64_MAX));
     VK_CHECK(vkResetFences(_logicalDevice, 1, &getCurrentFrame().renderFence));
@@ -239,6 +327,9 @@ void VulkanEngine::drawGeometry(VkCommandBuffer commandBuffer) {
         scissor.extent.height = _drawExtent.height;
         vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
 
+        // Draw a single triangle?
+        //vkCmdDraw(commandBuffer, 3, 0, 1, 0);
+#if 0
         // Bind texture
         VkDescriptorSet imageDescriptorSet = getCurrentFrame().frameDescriptors.allocate(_logicalDevice, _singleImageDescriptorLayout);
         {
@@ -266,7 +357,7 @@ void VulkanEngine::drawGeometry(VkCommandBuffer commandBuffer) {
 
         vkCmdBindIndexBuffer(commandBuffer, testMeshes[2]->meshBuffers.index.buffer, 0, VK_INDEX_TYPE_UINT32);
         vkCmdDrawIndexed(commandBuffer, testMeshes[2]->surfaces[0].count, 1, testMeshes[2]->surfaces[0].startIndex, 0, 0);
-
+#endif
         // Allocate a new uniform buffer for the scene data
         // TODO: This demonstrates a temporal buffer, could also hold this in FrameData
         AllocatedBuffer gpuSceneDataBuffer = createBuffer(sizeof(GPUSceneData), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
@@ -284,7 +375,23 @@ void VulkanEngine::drawGeometry(VkCommandBuffer commandBuffer) {
 
         DescriptorWriter writer;
         writer.writeBuffer(0, gpuSceneDataBuffer.buffer, sizeof(GPUSceneData), 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
+        writer.updateSet(_logicalDevice, globalDescriptor);
         // ---
+
+        for (const RenderObject& draw : _mainDrawContext.opaqueObjects) {
+            vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, draw.material->pipeline->pipeline);
+            vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, draw.material->pipeline->layout, 0, 1, &globalDescriptor, 0, nullptr);
+            vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, draw.material->pipeline->layout, 1, 1, &draw.material->descriptorSet, 0, nullptr);
+
+            vkCmdBindIndexBuffer(commandBuffer, draw.indexBuffer, 0, VK_INDEX_TYPE_UINT32);
+
+            GPUDrawPushConstants pushConstants;
+                pushConstants.address       = draw.vertexBufferAddress;
+                pushConstants.worldMatrix   = draw.transform;
+            vkCmdPushConstants(commandBuffer, draw.material->pipeline->layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(GPUDrawPushConstants), &pushConstants);
+
+            vkCmdDrawIndexed(commandBuffer, draw.indexCount, 1, draw.offset, 0, 0);
+        }
     vkCmdEndRendering(commandBuffer);
 }
 
@@ -699,10 +806,12 @@ void VulkanEngine::initCommands() {
 }
 
 void VulkanEngine::initDescriptors() {
-    std::vector<mnv::DescriptorAllocator::PoolSizeRatio> sizes {
-        { VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1 }
+    std::vector<mnv::DescriptorAllocatorGrowable::PoolSizeRatio> sizes {
+        { VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1 },
+        { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1 },
+        { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 3}
     };
-    globalDescriptorAllocator.initPool(_logicalDevice, 10, sizes);
+    _globalDescriptorAllocator.init(_logicalDevice, 10, sizes);
 
     // Create a DescriptorSetLayout for Compute draw
     {
@@ -727,7 +836,7 @@ void VulkanEngine::initDescriptors() {
     }
 
     // Allocate a DescriptorSet for our draw image
-    _drawImageDescriptor = globalDescriptorAllocator.allocate(_logicalDevice, _drawImageDescriptorLayout);
+    _drawImageDescriptor = _globalDescriptorAllocator.allocate(_logicalDevice, _drawImageDescriptorLayout);
     {
         mnv::DescriptorWriter writer;
         writer.writeImage(0, _drawImage.view, VK_NULL_HANDLE, VK_IMAGE_LAYOUT_GENERAL, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE);
@@ -736,7 +845,7 @@ void VulkanEngine::initDescriptors() {
 
     // Ensure both descriptor allocator and new layout are cleaned up
     _mainDeletionQueue.pushFunction([&]() {
-        globalDescriptorAllocator.destroyPool(_logicalDevice);
+        _globalDescriptorAllocator.destroyPools(_logicalDevice);
 
         vkDestroyDescriptorSetLayout(_logicalDevice, _drawImageDescriptorLayout, nullptr);
         vkDestroyDescriptorSetLayout(_logicalDevice, _singleImageDescriptorLayout, nullptr);
@@ -766,6 +875,8 @@ void VulkanEngine::initPipelines() {
     initBackgroundPipelines();
     // Graphics
     initMeshPipeline();
+    // Default resources
+    _metallicRoughnessMaterial.buildPipelines(this);
 }
 
 void VulkanEngine::initBackgroundPipelines() {
@@ -957,6 +1068,44 @@ void VulkanEngine::initDefaultData() {
         destroyImage(_blackImage);
         destroyImage(_errorCheckerboardImage);
     });
+
+    // Default material
+    // ---
+    // Set the uniform buffer for the material data
+    const AllocatedBuffer materialConstants = createBuffer(sizeof(GLTFMetallicRoughness::MaterialConstants), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
+
+    // Write the buffer
+    GLTFMetallicRoughness::MaterialConstants* sceneUniformData = static_cast<GLTFMetallicRoughness::MaterialConstants*>(materialConstants.allocation->GetMappedData());
+    sceneUniformData->colorFactor = glm::vec4{ 1,1,1,1 };
+    sceneUniformData->metalRoughFactor = glm::vec4{ 1,0.5,0,0 };
+
+    _mainDeletionQueue.pushFunction([=, this] () { destroyBuffer(materialConstants); });
+
+    const mnv::GLTFMetallicRoughness::MaterialResources materialResources {
+        .colorImage         = _whiteImage,
+        .colorSampler       = _defaultSamplerLinear,
+        .metalRoughImage    = _whiteImage,
+        .metalRoughSampler  = _defaultSamplerLinear,
+        .dataBuffer         = materialConstants.buffer,
+        .dataBufferOffset   = 0
+    };
+
+    _defaultMaterial = _metallicRoughnessMaterial.writeMaterial(_logicalDevice, MaterialPass::MainColor, materialResources, _globalDescriptorAllocator);
+    // ---
+
+    for (auto& mesh : testMeshes) {
+        std::shared_ptr<MeshNode> newNode = std::make_shared<MeshNode>();
+
+        newNode->mesh = mesh;
+        newNode->localTransform = glm::mat4{ 1.f };
+        newNode->worldTransform = glm::mat4{ 1.f };
+
+        for (auto& submesh : newNode->mesh->surfaces) {
+            submesh.material = std::make_shared<GLTFMaterial>(_defaultMaterial);
+        }
+
+        _loadedNodes[mesh->name] = std::move(newNode);
+    }
 }
 
 void VulkanEngine::initImgui() {
@@ -1017,4 +1166,30 @@ void VulkanEngine::initImgui() {
         ImGui_ImplVulkan_Shutdown();
         vkDestroyDescriptorPool(_logicalDevice, imguiPool, nullptr);
     });
+}
+
+void VulkanEngine::UpdateScene() {
+    _mainDrawContext.opaqueObjects.clear();
+
+    //_loadedNodes["Suzanne"]->Draw(glm::mat4{ 1.f }, _mainDrawContext);
+
+    _sceneData.view = glm::translate(glm::mat4{ 1.f }, glm::vec3{ 0.f, 0.f, -5.f });
+    _sceneData.proj = glm::perspective(glm::radians(70.f), static_cast<float>(_windowExtent.width) / static_cast<float>(_windowExtent.height), 10000.f, 0.1f);
+
+    // Invert Y to bring us more inline with opengl and GLTF
+    _sceneData.proj[1][1] *= -1;
+    _sceneData.viewProj = _sceneData.proj * _sceneData.view;
+
+    //some default lighting parameters
+    _sceneData.ambientColor = glm::vec4(0.1f);
+    _sceneData.sunlightColor = glm::vec4(1.f);
+    _sceneData.sunlightDirection = glm::vec4(0.f, 1.f, 0.5f, 1.f);
+
+    _loadedNodes["Suzanne"]->Draw(glm::mat4{ 1.f }, _mainDrawContext);
+
+    for (auto x=-3; x<3; ++x) {
+        const glm::mat4 scale = glm::scale(glm::mat4{ 1.f }, glm::vec3{ 0.2 });
+        const glm::mat4 translation = glm::translate(scale, glm::vec3{ x, 1, 0 });
+      //  _loadedNodes["Cube"]->Draw(translation * scale, _mainDrawContext);
+    }
 }

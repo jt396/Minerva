@@ -1,5 +1,6 @@
 ﻿
-#include "vk_loader.hpp"
+//#include "vk_loader.hpp"
+#include "vk_types.h"
 
 #include "stb_image.h"
 #include <iostream>
@@ -104,7 +105,7 @@ std::optional<mnv::Meshes> mnv::loadGltfMeshes(mnv::VulkanEngine* engine, std::f
         }
 
         // display the vertex normals
-        constexpr bool OverrideColors = true;
+        constexpr bool OverrideColors = false;
         if (OverrideColors) {
             for (mnv::Vertex& vtx : vertices) {
                 vtx.color = glm::vec4(vtx.normal, 1.f);
